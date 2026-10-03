@@ -1,0 +1,73 @@
+name: Deploy fork Pages from develop
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'yuxiaoli/md' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@v3
+        with:
+          runtime: node@22
+          cache: true
+          install: false
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org
+
+      - name: Prepare web extension types
+        run: pnpm web exec wxt prepare
+
+      - name: Type-check and build the site
+        run: pnpm web build --base "$PAGES_BASE_PATH/"
+        env:
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+
+      - name: Verify Pages output
+        run: |
+          test -f apps/web/dist/index.html
+          # Custom domains stay in Pages settings; never publish an upstream CNAME.
+          rm -f apps/web/dist/CNAME
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
